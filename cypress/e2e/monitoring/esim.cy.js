@@ -13,11 +13,16 @@ describe('E-SIM Search Flow', () => {
   const COUNTRY = 'Турция';
   const COUNTRY_CODE = 'TR';
 
+  // Проверено на выдаче: 16 article = 16 карточек тарифов, других article
+  // внутри main нет (фильтры слева — это div'ы).
+  const OFFER_CARD = 'main article';
+
   const T = {
     PAGE: 120000,
     UI: 30000,
     API: 45000,
     SEARCH: 60000,
+    RESULTS: 30000,
     LOGOUT: 30000,
   };
 
@@ -26,6 +31,7 @@ describe('E-SIM Search Flow', () => {
     FIELD: 500,
     SUBMIT: 800,
     TAB: 1000,
+    SETTLE: 2000,
   };
 
   before(() => {
@@ -148,12 +154,17 @@ describe('E-SIM Search Flow', () => {
       .and('include', `destination=${COUNTRY_CODE}`);
 
     // 15. ПОДСЧЁТ ОФФЕРОВ
-    cy.get('main article', { timeout: T.SEARCH })
-      .should('have.length.greaterThan', 0)
-      .then(($offers) => {
-        const count = $offers.length;
-        cy.writeFile('offers_count.txt', count.toString());
-        cy.log(`✅ Найдено офферов E-SIM (${COUNTRY}): ${count}`);
-      });
+    // Берём не первое значение, а стабилизировавшееся: карточки дорисовываются
+    // после гидратации, иначе в отчёт попадёт случайное число.
+    // Число пишем в файл до проверки: при пустой выдаче отчёт должен показать
+    // "⚪ No Offers" с нулём, а не "🔴 Unknown Test Failure" без числа.
+    cy.countWhenStable(OFFER_CARD, { timeout: T.RESULTS, settle: PAUSE.SETTLE }).then((count) => {
+      cy.writeFile('offers_count.txt', count.toString());
+      cy.log(`✅ Найдено офферов E-SIM (${COUNTRY}): ${count}`);
+
+      expect(count, 'офферов в выдаче').to.be.greaterThan(0);
+    });
+
+    cy.screenshot('after-search', { capture: 'viewport' });
   });
 });

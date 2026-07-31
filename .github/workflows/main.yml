@@ -1,4 +1,4 @@
-name: B2C Authentication Monitoring
+name: B2C eSIM Search AutoTest
 
 on:
   schedule:
@@ -33,47 +33,66 @@ jobs:
       - name: Parse Diagnostic Data
         if: always()
         run: |
-          # HTTP-коды и число офферов пишет сам тест:
-          #   auth_api_status.txt — авторизация
-          #   api_status.txt      — POST /api/v1/search/esim
-          #   offers_count.txt    — сколько карточек нашлось на выдаче
+          # Тест пишет три файла: HTTP-код авторизации, HTTP-код поиска E-SIM
+          # и количество офферов в выдаче. Значения по умолчанию (UNKNOWN / N/A)
+          # он выставляет в beforeEach, поэтому "UNKNOWN" здесь означает
+          # "до этого шага прогон не дошёл", а не "файла нет".
           # tr -d убирает пробелы и перевод строки, которые добавляются в CI.
-          read_file() {
-            if [ -f "$1" ]; then cat "$1" | tr -d '[:space:]'; else echo "UNKNOWN"; fi
-          }
+          if [ -f auth_api_status.txt ]; then
+            AUTH_STATUS=$(cat auth_api_status.txt | tr -d '[:space:]')
+          else
+            AUTH_STATUS="UNKNOWN"
+          fi
 
-          API_STATUS=$(read_file auth_api_status.txt)
-          SEARCH_STATUS=$(read_file api_status.txt)
-          OFFERS=$(read_file offers_count.txt)
+          if [ -f api_status.txt ]; then
+            API_STATUS=$(cat api_status.txt | tr -d '[:space:]')
+          else
+            API_STATUS="UNKNOWN"
+          fi
+
+          if [ -f offers_count.txt ]; then
+            COUNT=$(cat offers_count.txt | tr -d '[:space:]')
+          else
+            COUNT="N/A"
+          fi
 
           # Исход самого прогона Cypress: success / failure
           TEST_RESULT="${{ steps.cypress.outcome }}"
 
-          echo "MSG_OFFERS=$OFFERS" >> $GITHUB_ENV
+          echo "auth=$AUTH_STATUS search=$API_STATUS offers=$COUNT cypress=$TEST_RESULT"
 
-          if [[ ! "$API_STATUS" =~ ^[0-9]+$ ]]; then
-            # До запроса авторизации не дошли: упал UI, не открылась модалка
+          # Порядок ветвлений = порядок шагов теста: сначала отделяем падения
+          # авторизации от падений поиска, иначе всё сливается в один 🔴 и по
+          # уведомлению непонятно, где именно сломалось.
+          if [[ ! "$AUTH_STATUS" =~ ^[0-9]+$ ]]; then
+            # Запрос логина даже не ушёл: упал UI, не открылась модалка входа
             # или не заданы секреты LOGIN_EMAIL / LOGIN_PASSWORD
-            echo "MSG_STATUS=🔴 UI Error / Crash" >> $GITHUB_ENV
-            echo "MSG_CODE=N/A" >> $GITHUB_ENV
+            echo "MSG_STATUS=🔴 Test Crashed (UI Error)" >> $GITHUB_ENV
+            echo "MSG_COUNT=N/A" >> $GITHUB_ENV
+          elif [[ "$AUTH_STATUS" -ge 400 ]]; then
+            echo "MSG_STATUS=🔴 Auth Error HTTP $AUTH_STATUS" >> $GITHUB_ENV
+            echo "MSG_COUNT=Error" >> $GITHUB_ENV
+          elif [[ ! "$API_STATUS" =~ ^[0-9]+$ ]]; then
+            # Вошли, но поисковый запрос не ушёл: не открылась вкладка E-SIM,
+            # не выбралась страна из автокомплита или не сработал "Поиск"
+            echo "MSG_STATUS=🔴 Search Not Started (UI Error)" >> $GITHUB_ENV
+            echo "MSG_COUNT=N/A" >> $GITHUB_ENV
           elif [[ "$API_STATUS" -ge 400 ]]; then
-            echo "MSG_STATUS=🆘 Auth Server Error" >> $GITHUB_ENV
-            echo "MSG_CODE=auth HTTP $API_STATUS" >> $GITHUB_ENV
-          elif [[ ! "$SEARCH_STATUS" =~ ^[0-9]+$ ]]; then
-            # Вошли, но до запроса поиска не дошли: не открылась вкладка E-SIM,
-            # не подставилась страна или не нажалась кнопка "Поиск"
-            echo "MSG_STATUS=🔴 UI Error / Crash (E-SIM search)" >> $GITHUB_ENV
-            echo "MSG_CODE=auth HTTP $API_STATUS / search N/A" >> $GITHUB_ENV
-          elif [[ "$SEARCH_STATUS" -ge 400 ]]; then
-            echo "MSG_STATUS=🆘 Search Server Error" >> $GITHUB_ENV
-            echo "MSG_CODE=auth HTTP $API_STATUS / search HTTP $SEARCH_STATUS" >> $GITHUB_ENV
-          elif [[ "$TEST_RESULT" == "success" ]]; then
+            echo "MSG_STATUS=🔴 Server Error HTTP $API_STATUS" >> $GITHUB_ENV
+            echo "MSG_COUNT=Error" >> $GITHUB_ENV
+          elif [[ "$COUNT" == "0" ]]; then
+            echo "MSG_STATUS=⚪ No Offers" >> $GITHUB_ENV
+            echo "MSG_COUNT=0" >> $GITHUB_ENV
+          elif [[ "$COUNT" =~ ^[0-9]+$ && "$COUNT" -gt 0 && "$TEST_RESULT" == "success" ]]; then
             echo "MSG_STATUS=🟢 Success" >> $GITHUB_ENV
-            echo "MSG_CODE=auth HTTP $API_STATUS / search HTTP $SEARCH_STATUS" >> $GITHUB_ENV
-          else
-            # Бэкенд ответил нормально, но UI-проверки не прошли
+            echo "MSG_COUNT=$COUNT" >> $GITHUB_ENV
+          elif [[ "$COUNT" =~ ^[0-9]+$ && "$COUNT" -gt 0 ]]; then
+            # Тарифы нашлись, но какая-то проверка после поиска не прошла
             echo "MSG_STATUS=🟡 UI Check Failed" >> $GITHUB_ENV
-            echo "MSG_CODE=auth HTTP $API_STATUS / search HTTP $SEARCH_STATUS" >> $GITHUB_ENV
+            echo "MSG_COUNT=$COUNT" >> $GITHUB_ENV
+          else
+            echo "MSG_STATUS=🔴 Unknown Test Failure" >> $GITHUB_ENV
+            echo "MSG_COUNT=N/A" >> $GITHUB_ENV
           fi
 
       - name: Upload Cypress Screenshots
@@ -97,7 +116,7 @@ jobs:
           message: |
             ${{ github.event.inputs.user_chat_id != '' && '👤 **Manual Testing**' || '📢 **Hourly Monitoring**' }}
 
-            🔐 **Module:** B2C Authentication + E-SIM Search (Турция)
+            📂 **Module:** 📱 B2C eSIM Search Result
             📊 **Status:** ${{ env.MSG_STATUS }}
-            🌐 **Code:** ${{ env.MSG_CODE }}
-            🎫 **Offers:** ${{ env.MSG_OFFERS }}
+
+            **Offers Found:** ${{ env.MSG_COUNT }}
