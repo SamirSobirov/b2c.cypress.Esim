@@ -1,20 +1,19 @@
-// ResizeObserver loop — известный шум браузера на Nuxt-страницах с анимацией
+
+ // ResizeObserver loop — известный шум браузера на Nuxt-страницах с анимацией
 // фильтров. К доступности сайта отношения не имеет, тест из-за него ронять нельзя.
 Cypress.on('uncaught:exception', (err) => {
   if (err.message.includes('ResizeObserver')) return false;
 });
 
 describe('E-SIM Search Flow', () => {
-
   const EMAIL = Cypress.env('LOGIN_EMAIL');
   const PASSWORD = Cypress.env('LOGIN_PASSWORD');
 
-  // Страна поиска. CODE — то, что сайт кладёт в query-параметр destination
+  // Страна поиска
   const COUNTRY = 'Турция';
   const COUNTRY_CODE = 'TR';
 
-  // Проверено на выдаче: 16 article = 16 карточек тарифов, других article
-  // внутри main нет (фильтры слева — это div'ы).
+  // Карточки тарифов
   const OFFER_CARD = 'main article';
 
   const T = {
@@ -24,6 +23,7 @@ describe('E-SIM Search Flow', () => {
     SEARCH: 60000,
     RESULTS: 30000,
     LOGOUT: 30000,
+    AUTOCOMPLETE: 45000,
   };
 
   const PAUSE = {
@@ -32,11 +32,19 @@ describe('E-SIM Search Flow', () => {
     SUBMIT: 800,
     TAB: 1000,
     SETTLE: 2000,
+    AUTOCOMPLETE: 2000,
   };
 
   before(() => {
-    expect(EMAIL, 'секрет CYPRESS_LOGIN_EMAIL не задан').to.be.a('string').and.not.be.empty;
-    expect(PASSWORD, 'секрет CYPRESS_LOGIN_PASSWORD не задан').to.be.a('string').and.not.be.empty;
+    expect(
+      EMAIL,
+      'секрет CYPRESS_LOGIN_EMAIL не задан'
+    ).to.be.a('string').and.not.be.empty;
+
+    expect(
+      PASSWORD,
+      'секрет CYPRESS_LOGIN_PASSWORD не задан'
+    ).to.be.a('string').and.not.be.empty;
   });
 
   beforeEach(() => {
@@ -45,126 +53,229 @@ describe('E-SIM Search Flow', () => {
     cy.writeFile('offers_count.txt', 'N/A');
   });
 
-  // Авторизация и поиск — один тест, а не два: между тестами Cypress чистит
-  // куки и localStorage (test isolation), и вторая часть осталась бы без сессии.
   it('Login and E-SIM search with Smart Diagnostic', () => {
     cy.viewport(1280, 800);
 
     // 1. ПЕРЕХВАТ API
-    cy.intercept({ method: 'POST', url: '**/login**' }).as('apiAuth');
-    cy.intercept({ method: 'POST', url: '**/api/v1/search/esim**' }).as('apiEsimSearch');
+    cy.intercept({
+      method: 'POST',
+      url: '**/login**',
+    }).as('apiAuth');
+
+    cy.intercept({
+      method: 'POST',
+      url: '**/api/v1/search/esim**',
+    }).as('apiEsimSearch');
 
     // 2. ПЕРЕХОД НА ГЛАВНУЮ
-    cy.visit('https://metatrip.asia/ru/', { timeout: T.PAGE });
+    cy.visit('https://metatrip.asia/ru/', {
+      timeout: T.PAGE,
+    });
 
-    // 3. ОТКРЫТИЕ МОДАЛКИ "ВХОД В ПРОФИЛЬ"
-    // Клик с повтором: страница на Nuxt приходит с сервера уже отрисованной,
-    // и до окончания гидратации кнопка кликается вхолостую — модалка не встаёт.
-    // На раннере GitHub Actions это ловилось стабильно, локально почти никогда.
+    // 3. ОТКРЫТИЕ МОДАЛКИ АВТОРИЗАЦИИ
     cy.clickUntilVisible('nav button', '.p-dialog', {
       text: 'Войти',
       timeout: T.UI,
       pause: PAUSE.MODAL,
     });
 
-    cy.get('.p-dialog', { timeout: T.UI }).should('be.visible').within(() => {
-      cy.contains('Вход в профиль', { timeout: T.UI }).should('be.visible');
+    cy.get('.p-dialog', {
+      timeout: T.UI,
+    })
+      .should('be.visible')
+      .within(() => {
+        cy.contains('Вход в профиль', {
+          timeout: T.UI,
+        }).should('be.visible');
 
-      // 4. ВВОД ПОЧТЫ
-      cy.fillInput('input[name="email"]', EMAIL, { timeout: T.UI });
-      cy.wait(PAUSE.FIELD);
+        // 4. ВВОД EMAIL
+        cy.fillInput('input[name="email"]', EMAIL, {
+          timeout: T.UI,
+        });
 
-      // 5. ВВОД ПАРОЛЯ
-      cy.fillInput('input[name="password"]', PASSWORD, { timeout: T.UI });
-      cy.wait(PAUSE.SUBMIT);
+        cy.wait(PAUSE.FIELD);
 
-      // 6. КЛИК "ВОЙТИ"
-      cy.get('button[aria-label="Войти"]', { timeout: T.UI })
-        .should('be.visible')
-        .and('have.attr', 'data-p-disabled', 'false')
-        .click({ timeout: T.UI });
-    });
+        // 5. ВВОД ПАРОЛЯ
+        cy.fillInput('input[name="password"]', PASSWORD, {
+          timeout: T.UI,
+        });
 
-    // 7. УМНАЯ ПРОВЕРКА ОТВЕТА СЕРВЕРА
-    cy.wait('@apiAuth', { timeout: T.API }).then((interception) => {
+        cy.wait(PAUSE.SUBMIT);
+
+        // 6. КЛИК ВОЙТИ
+        cy.get('button[aria-label="Войти"]', {
+          timeout: T.UI,
+        })
+          .should('be.visible')
+          .and('have.attr', 'data-p-disabled', 'false')
+          .click({ timeout: T.UI });
+      });
+
+    // 7. ПРОВЕРКА ОТВЕТА АВТОРИЗАЦИИ
+    cy.wait('@apiAuth', {
+      timeout: T.API,
+    }).then((interception) => {
       const statusCode = interception.response?.statusCode || 500;
-      cy.writeFile('auth_api_status.txt', statusCode.toString());
 
-      if (statusCode >= 400) {
-        throw new Error(`🆘 Ошибка сервера при авторизации: HTTP ${statusCode}`);
-      }
+      cy.writeFile('auth_api_status.txt', String(statusCode));
+
+      expect(
+        statusCode,
+        `Ошибка авторизации: HTTP ${statusCode}`
+      ).to.be.within(200, 299);
     });
 
-    // 8. ПРОВЕРКА УСПЕШНОГО ВХОДА (UI)
-    cy.get('.p-dialog', { timeout: T.LOGOUT }).should('not.exist');
-    cy.get('body', { timeout: T.UI })
+    // 8. ПРОВЕРКА УСПЕШНОГО ВХОДА
+    cy.get('.p-dialog', {
+      timeout: T.LOGOUT,
+    }).should('not.exist');
+
+    cy.get('body', {
+      timeout: T.UI,
+    })
       .should('not.contain', 'Неверный логин')
       .and('not.contain', 'Ошибка');
 
-    cy.log('✅ Авторизация прошла успешно');
+    cy.log('Авторизация прошла успешно');
 
-    // 9. ВКЛАДКА "E-SIM" НА ГЛАВНОЙ
-    // Ищем по /SIM/, а не по строке "E-SIM": в вёрстке первая буква —
-    // кириллическая «Е» (U+0415), поиск по латинскому "E-SIM" не находит вкладку.
-    // Клик с повтором: форма поиска монтируется только после гидратации вкладок.
+    // 9. ПЕРЕХОД НА ВКЛАДКУ E-SIM
     cy.clickUntilVisible('button[role="tab"]', '.esim-search', {
       text: /SIM/i,
       timeout: T.UI,
       pause: PAUSE.TAB,
     });
 
-    cy.get('.esim-search', { timeout: T.UI }).should('be.visible');
+    cy.get('.esim-search', {
+      timeout: T.UI,
+    }).should('be.visible');
 
-    // 10. ВВОД СТРАНЫ В АВТОКОМПЛИТ
-    // fillInput перезапрашивает ноду и повторяет ввод: PrimeVue пересоздаёт
-    // инпут при переключении вкладки, и первый .type() уходит в пустоту.
-    cy.fillInput('.esim-search__destination input', COUNTRY, { timeout: T.UI });
+    // 10. ВВОД СТРАНЫ
+    // Очищаем поле и вводим текст с небольшой задержкой,
+    // чтобы дать автокомплиту обработать ввод.
+    cy.get('.esim-search__destination input', {
+      timeout: T.UI,
+    })
+      .should('be.visible')
+      .click()
+      .clear()
+      .type(COUNTRY, {
+        delay: 150,
+      });
 
-    // 11. ВЫБОР ПЕРВОГО ВАРИАНТА ИЗ ВЫПАДАЮЩЕГО СПИСКА
-    cy.get('.p-autocomplete-list [role="option"]', { timeout: T.UI })
+    cy.get('.esim-search__destination input', {
+      timeout: T.UI,
+    }).should('have.value', COUNTRY);
+
+    // 11. ОЖИДАНИЕ РЕЗУЛЬТАТОВ АВТОКОМПЛИТА
+    // PrimeVue может показывать сообщение "Ничего не найдено".
+    // Поэтому сначала проверяем наличие вариантов,
+    // а не предполагаем, что список уже существует.
+    cy.get('body', {
+      timeout: T.AUTOCOMPLETE,
+    }).should(($body) => {
+      const options = $body.find(
+        '.p-autocomplete-list [role="option"]'
+      );
+
+      const emptyMessage = $body.find(
+        '.p-autocomplete-empty-message, .p-autocomplete-empty-message *'
+      );
+
+      const hasEmptyText = $body
+        .text()
+        .includes('Ничего не найдено');
+
+      expect(
+        options.length > 0 || emptyMessage.length > 0 || hasEmptyText,
+        'Автокомплит должен показать варианты или сообщение об отсутствии результатов'
+      ).to.equal(true);
+    });
+
+    // Проверяем, появились ли варианты страны.
+    cy.get('body').then(($body) => {
+      const options = $body.find(
+        '.p-autocomplete-list [role="option"]'
+      );
+
+      if (options.length === 0) {
+        cy.screenshot('esim-autocomplete-no-results', {
+          capture: 'viewport',
+        });
+
+        throw new Error(
+          `Автокомплит не вернул варианты для "${COUNTRY}". ` +
+          'На странице отображается "Ничего не найдено". ' +
+          'Проверь ответ API автокомплита и формат названия страны.'
+        );
+      }
+    });
+
+    // 12. ВЫБОР СТРАНЫ
+    cy.get('.p-autocomplete-list [role="option"]', {
+      timeout: T.AUTOCOMPLETE,
+    })
       .should('have.length.greaterThan', 0)
       .first()
       .should('be.visible')
       .click({ timeout: T.UI });
 
-    cy.get('.p-autocomplete-list', { timeout: T.UI }).should('not.exist');
+    // Проверяем закрытие выпадающего списка.
+    // Учитываем, что PrimeVue может удалить список из DOM
+    // либо просто скрыть его.
+    cy.get('body').should(($body) => {
+      const list = $body.find('.p-autocomplete-list:visible');
+      expect(list.length).to.equal(0);
+    });
 
-    // 12. ПОИСК
-    cy.get('.esim-search__submit', { timeout: T.UI })
+    // 13. ЗАПУСК ПОИСКА
+    cy.get('.esim-search__submit', {
+      timeout: T.UI,
+    })
       .should('be.visible')
       .and('not.be.disabled')
       .click({ timeout: T.UI });
 
-    // 13. УМНАЯ ПРОВЕРКА ОТВЕТА ПОИСКА
-    cy.wait('@apiEsimSearch', { timeout: T.SEARCH }).then((interception) => {
+    // 14. ПРОВЕРКА ОТВЕТА API ПОИСКА
+    cy.wait('@apiEsimSearch', {
+      timeout: T.SEARCH,
+    }).then((interception) => {
       const statusCode = interception.response?.statusCode || 500;
-      cy.writeFile('api_status.txt', statusCode.toString());
 
-      if (statusCode >= 400) {
-        throw new Error(`🆘 Ошибка сервера при поиске E-SIM: HTTP ${statusCode}`);
-      }
+      cy.writeFile('api_status.txt', String(statusCode));
+
+      expect(
+        statusCode,
+        `Ошибка поиска E-SIM: HTTP ${statusCode}`
+      ).to.be.within(200, 299);
     });
 
-    // 14. ПРОВЕРКА, ЧТО ИСКАЛИ ИМЕННО ВЫБРАННУЮ СТРАНУ
-    // Страна попадает в URL кодом (Турция → TR) — заодно ловим случай,
-    // когда из списка кликнулся не тот вариант.
-    cy.url({ timeout: T.SEARCH })
+    // 15. ПРОВЕРКА URL
+    cy.url({
+      timeout: T.SEARCH,
+    })
       .should('include', '/esim')
       .and('include', 'searchType=country')
       .and('include', `destination=${COUNTRY_CODE}`);
 
-    // 15. ПОДСЧЁТ ОФФЕРОВ
-    // Берём не первое значение, а стабилизировавшееся: карточки дорисовываются
-    // после гидратации, иначе в отчёт попадёт случайное число.
-    // Число пишем в файл до проверки: при пустой выдаче отчёт должен показать
-    // "⚪ No Offers" с нулём, а не "🔴 Unknown Test Failure" без числа.
-    cy.countWhenStable(OFFER_CARD, { timeout: T.RESULTS, settle: PAUSE.SETTLE }).then((count) => {
-      cy.writeFile('offers_count.txt', count.toString());
-      cy.log(`✅ Найдено офферов E-SIM (${COUNTRY}): ${count}`);
+    // 16. ПОДСЧЁТ ОФФЕРОВ
+    // Ждём, пока число карточек стабилизируется.
+    cy.countWhenStable(OFFER_CARD, {
+      timeout: T.RESULTS,
+      settle: PAUSE.SETTLE,
+    }).then((count) => {
+      cy.writeFile('offers_count.txt', String(count));
 
-      expect(count, 'офферов в выдаче').to.be.greaterThan(0);
+      cy.log(`Найдено офферов E-SIM (${COUNTRY}): ${count}`);
+
+      expect(
+        count,
+        `Количество офферов для ${COUNTRY}`
+      ).to.be.greaterThan(0);
     });
 
-    cy.screenshot('after-search', { capture: 'viewport' });
+    // 17. СКРИНШОТ РЕЗУЛЬТАТОВ
+    cy.screenshot('after-search', {
+      capture: 'viewport',
+    });
   });
 });
