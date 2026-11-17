@@ -254,7 +254,7 @@ describe('E-SIM Search Flow', () => {
       timeout: T.SEARCH,
     })
       .should('include', '/esim')
-      .and('include', 'searchType=country')
+      .and('include', 'searchType=country') 
       .and('include', `destination=${COUNTRY_CODE}`);
 
     // 16. ПОДСЧЁТ ОФФЕРОВ
